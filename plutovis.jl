@@ -16,8 +16,13 @@ begin
 	using Statistics
 end
 
+# ╔═╡ 341942e4-34b0-11eb-06cb-5567deeb8ff3
+md"""
+## Julia repository report
+"""
+
 # ╔═╡ 1700751e-32ea-11eb-2542-8dc5191e8fdd
-df = CSV.File("jlgh.csv", delim = '\1') |> DataFrame;
+df = CSV.File("data/jlgh.csv", delim = '\1') |> DataFrame;
 
 # ╔═╡ 4d51622c-32ea-11eb-0447-115d7d50b528
 let
@@ -52,8 +57,10 @@ let
     	sort(:cnt, rev = true)
     	first(10)
 	end
+	
+	dt = Date(maximum(df.createdAt))
 md"""
-### Overall statistics (on the date 2020-11-28)
+### Overall statistics (on the date $dt)
 
 * Number of PRs: **$(size(df, 1))**
 
@@ -278,11 +285,108 @@ $p2
 """
 end
 
+# ╔═╡ b287f230-3424-11eb-0222-4db2a5660145
+let
+	x = @chain df begin
+		sort(:createdAt)
+		filter(x -> !ismissing(x.author), _)
+		groupby(:author)
+		transform(:createdAt => (x -> 1:size(x, 1)) => :rn)
+		filter(:rn => ==(1), _)
+		transform(:createdAt => (x -> year.(x)) => :year)
+		groupby(:year)
+		combine(
+			:merged => (x -> sum(x)) => :merged_cnt,
+			:closed => (x -> sum(x)) => :closed_cnt,
+			:closed => (x -> length(x) - sum(x)) => :open_cnt,
+			:merged => (x -> length(x)) => :pr_cnt,
+		)
+		transform(
+			[:merged_cnt, :closed_cnt] => ((x, y) -> y .- x) => :rejected_cnt,
+			[:merged_cnt, :pr_cnt] => ((x, y) -> x./y) => :ratio,
+		)
+		transform(
+			[:open_cnt, :pr_cnt] => ((x, y) -> x./y) => :open_ratio,
+			[:rejected_cnt, :pr_cnt] => ((x, y) -> x./y) => :rejected_ratio,
+		)
+	end
+	
+	plot(x.year, x.ratio, label = "Merged")
+	plot!(x.year, x.open_ratio, label = "Open")
+	p = plot!(x.year, x.rejected_ratio, label = "Rejected")
+md"""
+### State of the first PR of new authors.
+Here you can find what has happened with the first PR of new authors. Generally PR can be in one of three states: Open, Merged or Closed (i.e. Rejected). Of course this statistics is skewed, since it older PR has more chances to be in Merged or Rejected state.
+	
+$p
+	
+$x
+"""
+end
+
+# ╔═╡ 2129de2c-34b1-11eb-1dd9-fb44921d4628
+let
+	core = @_ unique(df.mergedBy) |> filter(!ismissing(_), __) |> Set
+	
+	df1 = @chain df begin
+		transform(
+			:author => (x -> ifelse.(in.(x, Ref(core)), "Core", "Other")) => :iscore,
+			:createdAt => (x -> year.(x)) => :year,
+		)
+		groupby([:year, :iscore])
+		combine(nrow => :cnt)
+		unstack(:iscore, :cnt)
+		transform([:Core, :Other] => ((x, y) -> y./(y .+ x)) => :other_ratio)
+	end
+	
+	plot(df1.year, df1.Core, label = "Core", legend = :topleft, title = "Number of PRs by developer group")
+	p = plot!(df1.year, df1.Other, label = "Other")
+	
+	p2 = plot(df1.year , df1.other_ratio, label = nothing, title = "Percentage of PRs from non-core developers")
+	
+	df2 = @chain df begin
+		transform(
+			:author => (x -> ifelse.(in.(x, Ref(core)), "Core", "Other")) => :iscore,
+			:createdAt => (x -> year.(x)) => :year,
+			[:createdAt, :closedAt] => ((x, y) -> getfield.(y .- x, :value)) => :delta,
+		)
+		transform(:delta => (x -> abs.(x)/1000/60/60) => :delta)
+		groupby([:year, :iscore])
+		combine(:delta => (x -> quantile(x, 0.5)) => :median)
+		unstack(:iscore, :median)
+	end
+	
+	plot(df2.year, df2.Core, label = "Core", legend = :topleft)
+	p3 = plot!(df2.year, df2.Other, label = "Other")
+md"""
+### Core and non-core developers
+	
+#### PRs by developer group
+In the following table and plot is shown number of PR aggregated by the year of creation and whether it was created by someone from core team (developers who can merge PRs) and other contributors. `other_ratio` field is a ratio of PRs made by non core developers to the all PRs.
+	
+$df1
+	
+$p
+	
+$p2
+
+#### Median waiting times by developer group
+Here you can see median waiting time of PRs split by developer group. You can compare it with overall median times presented in "Quantiles of waiting time" section. The same definition of waiting time is used.
+	
+$df2
+	
+$p3
+"""
+end
+
 # ╔═╡ Cell order:
 # ╟─5387f5da-32e9-11eb-0755-4761179a9e2e
+# ╟─341942e4-34b0-11eb-06cb-5567deeb8ff3
 # ╟─4d51622c-32ea-11eb-0447-115d7d50b528
 # ╟─c217826c-32ea-11eb-2a1d-e736665734e2
 # ╟─47f606d6-32ed-11eb-3310-8d8049de3912
 # ╟─15860222-32ee-11eb-0156-0562ec7cbf24
 # ╟─97a61064-32f1-11eb-3608-399a0b6972de
+# ╟─b287f230-3424-11eb-0222-4db2a5660145
+# ╟─2129de2c-34b1-11eb-1dd9-fb44921d4628
 # ╟─1700751e-32ea-11eb-2542-8dc5191e8fdd

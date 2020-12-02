@@ -15,9 +15,16 @@ using Logging, LoggingFacilities
 const TOKEN = strip(read("pat", String))
 const GRAPHQLURL = "https://api.github.com/graphql"
 const OUTFILE = "jlgh.csv"
+const DATAROOT = "data"
+const REPOS = [
+               # ("JuliaLang", "julia", "jlgh.csv"),
+               # ("rust-lang", "rust", "rustgh.csv"),
+               ("chapel-lang", "chapel", "chapelgh.csv"),
+               ("nim-lang", "Nim", "nim.csv"),
+]
 const QUERY = mt"""
 query {
-  repository(owner:"JuliaLang", name:"julia") {
+    repository(owner:"{{ owner }}", name:"{{ repo }}") {
       pullRequests(first:100{{{ cursor }}}) {
       edges {
         cursor
@@ -70,7 +77,7 @@ struct PR
     mergedBy::String
     closed::Bool
     closedAt::DateTime
-    title::String
+    # title::String
 end
 
 function PR(node)
@@ -83,9 +90,10 @@ function PR(node)
     mergedBy = isnothing(node.mergedBy) ? "" : node.mergedBy.login
     closed = node.closed
     closedAt = isnothing(node.closedAt) ? DateTime(0) : DateTime(node.closedAt[1:end-1])
-    title = node.title
+    # title = node.title
 
-    PR(number, state, author, createdAt, merged, mergedAt, mergedBy, closed, closedAt, title)
+    # PR(number, state, author, createdAt, merged, mergedAt, mergedBy, closed, closedAt, title)
+    PR(number, state, author, createdAt, merged, mergedAt, mergedBy, closed, closedAt)
 end
 
 function execute(query, graphqlurl = GRAPHQLURL, token = TOKEN)
@@ -101,8 +109,8 @@ function remain(; query = REMAIN_QUERY)
     return (; limit = res.limit, reset_ts = DateTime(res.resetAt[1:end-1]), remaining = res.remaining)
 end
 
-function collect(; output = OUTFILE, query = QUERY)
-    q = render(query, Dict("cursor" => ""))
+function collect(owner, repo, output = OUTFILE; query = QUERY)
+    q = render(query, Dict("cursor" => "", "owner" => owner, "repo" => repo))
     res = execute(q)
     cursor = res.data.repository.pullRequests.edges[end].cursor
     res = @_ map(PR(_.node), res.data.repository.pullRequests.edges)
@@ -113,7 +121,7 @@ function collect(; output = OUTFILE, query = QUERY)
     r = remain()
     @info "Remain: " r.limit r.remaining r.reset_ts
     while true
-        q = render(query, Dict("cursor" => ", after: \"$cursor\""))
+        q = render(query, Dict("cursor" => ", after: \"$cursor\"", "owner" => owner, "repo" => repo))
         res = execute(q)
         isempty(res.data.repository.pullRequests.edges) && break
         cursor = res.data.repository.pullRequests.edges[end].cursor
@@ -127,4 +135,7 @@ function collect(; output = OUTFILE, query = QUERY)
     end
 end
 
-collect()
+for (owner, repo, outfile) in REPOS
+    outfile = joinpath(DATAROOT, outfile)
+    collect(owner, repo, outfile)
+end
